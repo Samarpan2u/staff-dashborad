@@ -1,0 +1,39 @@
+// 1. Add Firebase SDKs to your <head>
+// <script src="https://www.gstatic.com/firebasejs/10.0.0/firebase-app-compat.js"></script>
+// <script src="https://www.gstatic.com/firebasejs/10.0.0/firebase-firestore-compat.js"></script>
+
+// 2. Initialize Firebase (Replace with your actual config)
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "...",
+  appId: "..."
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// 3. Update the Save Function to push to Cloud
+async function saveAll() {
+    await db.collection("settings").doc("mainData").set({
+        staffList: staffList,
+        weeklyRoutine: weeklyRoutine,
+        leaveData: leaveData,
+        salaries: salaries
+    });
+}
+
+// 4. Use a Real-Time Listener
+// This ensures that when YOU change the routine, 
+// EVERYONE'S screen updates instantly without refreshing.
+db.collection("settings").doc("mainData").onSnapshot((doc) => {
+    if (doc.exists()) {
+        const data = doc.data();
+        staffList = data.staffList;
+        weeklyRoutine = data.weeklyRoutine;
+        leaveData = data.leaveData;
+        salaries = data.salaries;
+        render(); // This re-renders the dashboard and routine tables
+    }
+});
