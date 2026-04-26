@@ -1,39 +1,377 @@
-// 1. Add Firebase SDKs to your <head>
-// <script src="https://www.gstatic.com/firebasejs/10.0.0/firebase-app-compat.js"></script>
-// <script src="https://www.gstatic.com/firebasejs/10.0.0/firebase-firestore-compat.js"></script>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Staff Operations Center</title>
+    
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
-// 2. Initialize Firebase (Replace with your actual config)
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "...",
-  appId: "..."
-};
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
+    <style>
+        :root { 
+            --primary: #2563eb; --success: #22c55e; --danger: #ef4444; --warning: #f59e0b;
+            --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0; --text: #0f172a; --text-dim: #64748b;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 20px; }
+        
+        .container { max-width: 1200px; margin: 0 auto; }
+        
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; background: white; padding: 15px 20px; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .nav-tabs { display: flex; gap: 5px; background: #f1f5f9; padding: 4px; border-radius: 8px; }
+        .tab-btn { padding: 8px 16px; border: none; background: none; cursor: pointer; border-radius: 6px; font-weight: 600; color: var(--text-dim); transition: 0.2s; }
+        .tab-btn.active { background: white; color: var(--primary); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        
+        .panel { display: none; }
+        .panel.active { display: block; }
 
-// 3. Update the Save Function to push to Cloud
-async function saveAll() {
-    await db.collection("settings").doc("mainData").set({
-        staffList: staffList,
-        weeklyRoutine: weeklyRoutine,
-        leaveData: leaveData,
-        salaries: salaries
+        .dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 15px; }
+        .shift-card { background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px; position: relative; border-left: 6px solid #cbd5e1; transition: 0.3s; }
+        
+        /* Green color for ANY active shift (Regular or Replaced) */
+        .shift-card.active { border-left-color: var(--success) !important; background: #f0fdf4 !important; border-width: 1px 1px 1px 6px; }
+        .shift-card.replaced { border-left-color: var(--warning); background: #fffbeb; }
+        
+        .status-badge { position: absolute; top: 15px; right: 15px; padding: 3px 8px; border-radius: 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+        .status-on { background: #dcfce7; color: #166534; }
+        .status-rep { background: #fef3c7; color: #92400e; }
+
+        .card { background: white; border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; }
+        th { background: #f8fafc; padding: 12px; text-align: left; font-size: 11px; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border); }
+        td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+        
+        .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 15px; }
+        label { display: block; font-size: 11px; font-weight: 700; color: var(--text-dim); margin-bottom: 4px; }
+        input, select, button { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; }
+        button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: 600; }
+        .stat-box { background: #f8fafc; border: 1px solid var(--border); padding: 10px; border-radius: 8px; text-align: center; }
+        .stat-val { font-size: 18px; font-weight: 700; display: block; }
+        .stat-lbl { font-size: 10px; color: var(--text-dim); }
+
+        #loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); display: flex; align-items: center; justify-content: center; z-index: 1000; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="loading-overlay">Syncing with Cloud...</div>
+
+<div class="container">
+    <div class="header">
+        <div>
+            <h1 style="font-size: 18px;">Staff Management Suite</h1>
+            <p id="live-clock" style="font-size: 12px; color: var(--text-dim);"></p>
+        </div>
+        <div class="nav-tabs">
+            <button class="tab-btn active" onclick="switchTab('dash')">Dashboard</button>
+            <button class="tab-btn" onclick="switchTab('routine')">Routine & Leaves</button>
+            <button class="tab-btn" onclick="switchTab('payroll')">Payroll & Staff</button>
+        </div>
+    </div>
+
+    <div id="panel-dash" class="panel active">
+        <h2 style="font-size: 15px; margin-bottom: 15px;">Live Shift Dashboard</h2>
+        <div class="dash-grid" id="dash-container"></div>
+    </div>
+
+    <div id="panel-routine" class="panel">
+        <div class="card">
+            <h2 style="font-size: 15px; margin-bottom: 10px;">Weekly Routine</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Day</th>
+                        <th>4 AM - 8 AM</th>
+                        <th>8 AM - 6 PM</th>
+                        <th>6 PM - 12 AM</th>
+                        <th>12 AM - 4 AM</th>
+                    </tr>
+                </thead>
+                <tbody id="routine-body"></tbody>
+            </table>
+        </div>
+
+        <div class="card" style="border-top: 4px solid var(--warning);">
+            <h2 style="font-size: 15px; margin-bottom: 15px;">Bulk Leave Entry</h2>
+            <div class="form-row">
+                <div><label>From Date</label><input type="date" id="lv-start"></div>
+                <div><label>To Date</label><input type="date" id="lv-end"></div>
+                <div><label>Absent Staff</label><select id="lv-absent" class="staff-drop"></select></div>
+                <div><label>Covered By</label><select id="lv-cover" class="staff-drop"></select></div>
+                <div><button onclick="addLeaveRange()" style="margin-top: 18px;">Apply Leave</button></div>
+            </div>
+            <div id="leave-log" style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px;"></div>
+        </div>
+    </div>
+
+    <div id="panel-payroll" class="panel">
+        <div class="form-row" style="margin-bottom: 20px;">
+            <div class="card" style="margin-bottom: 0;">
+                <label>Add New Staff</label>
+                <div style="display: flex; gap: 5px;">
+                    <input type="text" id="new-staff-name" placeholder="Name">
+                    <button onclick="addStaff()" style="width: auto;">Add</button>
+                </div>
+            </div>
+            <div class="card" style="margin-bottom: 0;">
+                <label>Rename Existing Staff</label>
+                <div style="display: flex; gap: 5px;">
+                    <select id="rename-old" class="staff-drop" style="flex:1"></select>
+                    <input type="text" id="rename-new" placeholder="New Name" style="flex:1">
+                    <button onclick="renameStaff()" style="width: auto;">Update</button>
+                </div>
+            </div>
+        </div>
+        <div class="dash-grid" id="payroll-grid"></div>
+    </div>
+</div>
+
+<script>
+    // ==========================================
+    // 1. FIREBASE CONFIGURATION
+    // ==========================================
+    const firebaseConfig = {
+        apiKey: "PASTE_YOUR_API_KEY_HERE",
+        authDomain: "YOUR_PROJECT.firebaseapp.com",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_PROJECT.appspot.com",
+        messagingSenderId: "YOUR_ID",
+        appId: "YOUR_APP_ID"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // ==========================================
+    // 2. DATA CONSTANTS
+    // ==========================================
+    const shiftHours = [4, 10, 6, 4];
+    const shiftLabels = ["4 AM - 8 AM", "8 AM - 6 PM", "6 PM - 12 AM", "12 AM - 4 AM"];
+    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+    let staffList = [];
+    let weeklyRoutine = {};
+    let leaveData = [];
+    let salaries = {};
+
+    // ==========================================
+    // 3. REAL-TIME SYNC (The Magic)
+    // ==========================================
+    db.collection("staffData").doc("main").onSnapshot((doc) => {
+        if (doc.exists()) {
+            const data = doc.data();
+            staffList = data.staffList || [];
+            weeklyRoutine = data.weeklyRoutine || {};
+            leaveData = data.leaveData || [];
+            salaries = data.salaries || {};
+            
+            document.getElementById('loading-overlay').style.display = 'none';
+            render();
+        } else {
+            // Initial Seed Data if Database is empty
+            staffList = ["Binita Sharma", "Binita Khatiwada", "Kiran", "Prabesh Acharya", "Samipya", "Babita Acharya"];
+            weeklyRoutine = {
+                "Sunday": [staffList[0], staffList[1], staffList[2], staffList[3]],
+                "Monday": [staffList[0], staffList[1], staffList[4], staffList[5]],
+                "Tuesday": [staffList[0], staffList[4], staffList[2], staffList[3]],
+                "Wednesday": [staffList[0], staffList[1], staffList[4], staffList[5]],
+                "Thursday": [staffList[0], staffList[1], staffList[2], staffList[3]],
+                "Friday": [staffList[0], staffList[5], staffList[2], staffList[3]],
+                "Saturday": [staffList[1], staffList[3], staffList[2], staffList[5]]
+            };
+            saveAll(); 
+        }
     });
-}
 
-// 4. Use a Real-Time Listener
-// This ensures that when YOU change the routine, 
-// EVERYONE'S screen updates instantly without refreshing.
-db.collection("settings").doc("mainData").onSnapshot((doc) => {
-    if (doc.exists()) {
-        const data = doc.data();
-        staffList = data.staffList;
-        weeklyRoutine = data.weeklyRoutine;
-        leaveData = data.leaveData;
-        salaries = data.salaries;
-        render(); // This re-renders the dashboard and routine tables
+    async function saveAll() {
+        await db.collection("staffData").doc("main").set({
+            staffList, weeklyRoutine, leaveData, salaries
+        });
     }
-});
+
+    // ==========================================
+    // 4. RENDERING FUNCTIONS
+    // ==========================================
+    function renderDashboard() {
+        const container = document.getElementById('dash-container');
+        const now = new Date();
+        const dayName = days[now.getDay()];
+        const todayStr = now.toISOString().split('T')[0];
+        const hour = now.getHours();
+
+        if (!weeklyRoutine[dayName]) return;
+
+        container.innerHTML = weeklyRoutine[dayName].map((scheduled, idx) => {
+            let isActive = false;
+            if (idx === 0 && hour >= 4 && hour < 8) isActive = true;
+            if (idx === 1 && hour >= 8 && hour < 18) isActive = true;
+            if (idx === 2 && hour >= 18 && hour < 24) isActive = true;
+            if (idx === 3 && hour >= 0 && hour < 4) isActive = true;
+
+            const log = leaveData.find(l => l.date === todayStr && l.shiftIdx === idx);
+            const isReplaced = !!log;
+            const displayStaff = isReplaced ? log.replacedBy : scheduled;
+
+            return `
+                <div class="shift-card ${isActive ? 'active' : ''} ${isReplaced ? 'replaced' : ''}">
+                    ${isReplaced ? '<span class="status-badge status-rep">Replaced</span>' : (isActive ? '<span class="status-badge status-on">Live</span>' : '')}
+                    <div style="font-size: 11px; color: var(--text-dim); font-weight: bold;">${shiftLabels[idx]}</div>
+                    <div style="font-size: 18px; font-weight: bold; margin: 8px 0;">${displayStaff}</div>
+                    
+                    <div style="margin-top: 15px; border-top: 1px dashed #e2e8f0; padding-top: 12px;">
+                        <label style="font-size:9px">QUICK REPLACE</label>
+                        <select onchange="dashboardReplace(${idx}, '${scheduled}', this.value)">
+                            <option value="">-- Choose Staff --</option>
+                            ${staffList.map(s => `<option value="${s}" ${displayStaff === s ? 'selected' : ''}>${s}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function dashboardReplace(idx, scheduledInRoutine, selectedName) {
+        const todayStr = new Date().toISOString().split('T')[0];
+        leaveData = leaveData.filter(l => !(l.date === todayStr && l.shiftIdx === idx));
+        
+        if (selectedName !== scheduledInRoutine && selectedName !== "") {
+            leaveData.push({ 
+                id: Date.now(), date: todayStr, shiftIdx: idx, 
+                absentStaff: scheduledInRoutine, replacedBy: selectedName, hrs: shiftHours[idx] 
+            });
+        }
+        saveAll();
+    }
+
+    function renderRoutine() {
+        document.getElementById('routine-body').innerHTML = days.map(day => `
+            <tr>
+                <td style="font-weight:bold">${day}</td>
+                ${weeklyRoutine[day].map((s, idx) => `
+                    <td><select onchange="weeklyRoutine['${day}'][${idx}]=this.value;saveAll()">
+                        ${staffList.map(st => `<option value="${st}" ${st===s?'selected':''}>${st}</option>`).join('')}
+                    </select></td>
+                `).join('')}
+            </tr>
+        `).join('');
+    }
+
+    function renderPayroll() {
+        const grid = document.getElementById('payroll-grid');
+        grid.innerHTML = staffList.map(s => {
+            const fin = salaries[s] || { base: 0, rate: 0 };
+            let monthlyExpected = 0;
+            days.forEach(d => { if(weeklyRoutine[d]) monthlyExpected += weeklyRoutine[d].filter(st => st === s).length * 4; });
+            
+            const absents = leaveData.filter(l => l.absentStaff === s).length;
+            const extraHrs = leaveData.filter(l => l.replacedBy === s).reduce((sum, l) => sum + l.hrs, 0);
+            const absPct = monthlyExpected > 0 ? ((absents / monthlyExpected) * 100).toFixed(1) : 0;
+            const net = (fin.base * (1 - (absPct/100))) + (extraHrs * fin.rate);
+
+            return `
+                <div class="card">
+                    <h3 style="margin-bottom:12px">${s}</h3>
+                    <div class="form-row">
+                        <div><label>Base Salary</label><input type="number" value="${fin.base}" onchange="updateFin('${s}','base',this.value)"></div>
+                        <div><label>Extra Hr Pay</label><input type="number" value="${fin.rate}" onchange="updateFin('${s}','rate',this.value)"></div>
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">
+                        <div class="stat-box"><span class="stat-val" style="color:var(--danger)">${absPct}%</span><span class="stat-lbl">Absent</span></div>
+                        <div class="stat-box"><span class="stat-val" style="color:var(--success)">+${extraHrs}h</span><span class="stat-lbl">Covered</span></div>
+                    </div>
+                    <div style="margin-top:15px; padding:12px; background:var(--bg); border-radius:8px; text-align:center;">
+                        <span style="font-size:10px; color:var(--text-dim); font-weight:bold;">NET PAYABLE</span>
+                        <div style="font-size:22px; font-weight:bold; color:var(--primary)">Rs. ${net.toLocaleString()}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    // ==========================================
+    // 5. CORE ACTIONS
+    // ==========================================
+    function addLeaveRange() {
+        let cur = new Date(document.getElementById('lv-start').value);
+        let end = new Date(document.getElementById('lv-end').value || document.getElementById('lv-start').value);
+        const abs = document.getElementById('lv-absent').value;
+        const cov = document.getElementById('lv-cover').value;
+        if (!abs || !cov || abs === cov) return alert("Select distinct staff.");
+
+        while (cur <= end) {
+            const dStr = cur.toISOString().split('T')[0];
+            const dName = days[cur.getDay()];
+            weeklyRoutine[dName].forEach((s, idx) => {
+                if (s === abs) {
+                    leaveData = leaveData.filter(l => !(l.date === dStr && l.shiftIdx === idx));
+                    leaveData.push({ id: Math.random(), date: dStr, shiftIdx: idx, absentStaff: abs, replacedBy: cov, hrs: shiftHours[idx] });
+                }
+            });
+            cur.setDate(cur.getDate() + 1);
+        }
+        saveAll();
+    }
+
+    function addStaff() {
+        const n = document.getElementById('new-staff-name').value.trim();
+        if (n && !staffList.includes(n)) { staffList.push(n); saveAll(); }
+    }
+
+    function renameStaff() {
+        const oldN = document.getElementById('rename-old').value;
+        const newN = document.getElementById('rename-new').value.trim();
+        if (!oldN || !newN) return;
+        staffList[staffList.indexOf(oldN)] = newN;
+        for (let d in weeklyRoutine) weeklyRoutine[d] = weeklyRoutine[d].map(s => s === oldN ? newN : s);
+        leaveData.forEach(l => {
+            if (l.absentStaff === oldN) l.absentStaff = newN;
+            if (l.replacedBy === oldN) l.replacedBy = newN;
+        });
+        if (salaries[oldN]) { salaries[newN] = salaries[oldN]; delete salaries[oldN]; }
+        saveAll();
+    }
+
+    function updateFin(s, field, val) {
+        if (!salaries[s]) salaries[s] = { base: 0, rate: 0 };
+        salaries[s][field] = parseFloat(val) || 0;
+        saveAll();
+    }
+
+    function render() {
+        const time = new Date();
+        document.getElementById('live-clock').innerText = time.toDateString() + " | " + time.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        
+        const drops = document.querySelectorAll('.staff-drop');
+        const optHtml = staffList.map(s => `<option value="${s}">${s}</option>`).join('');
+        drops.forEach(d => d.innerHTML = '<option value="">-- Select --</option>' + optHtml);
+        
+        renderDashboard();
+        renderRoutine();
+        renderPayroll();
+        
+        document.getElementById('leave-log').innerHTML = leaveData.slice(-5).reverse().map(l => `
+            <div style="font-size:11px; padding:6px 0; border-bottom:1px solid #f1f5f9; display:flex; justify-content:space-between;">
+                <span><b>${l.date}</b>: ${l.absentStaff} → ${l.replacedBy} (${l.hrs}h)</span>
+                <span style="color:var(--danger); cursor:pointer; font-weight:bold;" onclick="deleteLeave(${l.id})">DELETE</span>
+            </div>
+        `).join('');
+    }
+
+    function deleteLeave(id) {
+        leaveData = leaveData.filter(l => l.id !== id);
+        saveAll();
+    }
+
+    function switchTab(tab) {
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById('panel-' + tab).classList.add('active');
+        event.currentTarget.classList.add('active');
+    }
+
+    setInterval(() => { renderDashboard(); }, 30000); // UI check every 30s
+</script>
+
+</body>
+</html>
